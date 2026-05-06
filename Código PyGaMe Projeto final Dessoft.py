@@ -8,6 +8,7 @@ Execute este arquivo para iniciar o jogo:
 """
  
 import pygame
+import random
  
 # =============================================================================
 # CONFIGURAÇÕES
@@ -27,6 +28,8 @@ BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 CYAN = (0, 255, 255)
 DARK_GRAY = (40, 40, 40)
+ORANGE = (255, 165, 0)
+MAGENTA = (255, 0, 200)
  
 # Jogador
 PLAYER_SPEED = 5
@@ -38,7 +41,15 @@ BULLET_SPEED = -8
 BULLET_WIDTH = 4
 BULLET_HEIGHT = 12
 BULLET_COLOR = YELLOW
-SHOOT_DELAY = 250  # Milissegundos entre cada tiro
+SHOOT_DELAY = 250
+ 
+# Inimigos
+ENEMY_MIN_SPEED = 2
+ENEMY_MAX_SPEED = 5
+ENEMY_WIDTH = 36
+ENEMY_HEIGHT = 36
+ENEMY_SPAWN_DELAY = 800  # Milissegundos entre cada spawn
+MAX_ENEMIES = 8
  
  
 # =============================================================================
@@ -84,7 +95,6 @@ class Player(pygame.sprite.Sprite):
         """
         surface = pygame.Surface((PLAYER_WIDTH, PLAYER_HEIGHT), pygame.SRCALPHA)
  
-        # Corpo principal da nave (triângulo)
         body_points = [
             (PLAYER_WIDTH // 2, 0),
             (0, PLAYER_HEIGHT),
@@ -92,7 +102,6 @@ class Player(pygame.sprite.Sprite):
         ]
         pygame.draw.polygon(surface, CYAN, body_points)
  
-        # Detalhe central
         detail_points = [
             (PLAYER_WIDTH // 2, 8),
             (PLAYER_WIDTH // 2 - 8, PLAYER_HEIGHT - 5),
@@ -100,10 +109,7 @@ class Player(pygame.sprite.Sprite):
         ]
         pygame.draw.polygon(surface, DARK_GRAY, detail_points)
  
-        # Cabine (pequeno círculo)
         pygame.draw.circle(surface, WHITE, (PLAYER_WIDTH // 2, 20), 5)
- 
-        # Propulsor (retângulo na base)
         pygame.draw.rect(surface, YELLOW, (PLAYER_WIDTH // 2 - 5, PLAYER_HEIGHT - 8, 10, 8))
  
         return surface
@@ -130,11 +136,7 @@ class Player(pygame.sprite.Sprite):
         self._clamp_to_screen()
  
     def shoot(self):
-        """Dispara um tiro se o tempo de recarga já passou.
- 
-        Cria um objeto Bullet na posição da ponta da nave e adiciona
-        aos grupos de sprites correspondentes.
-        """
+        """Dispara um tiro se o tempo de recarga já passou."""
         now = pygame.time.get_ticks()
         if now - self.last_shot >= SHOOT_DELAY:
             self.last_shot = now
@@ -175,7 +177,6 @@ class Bullet(pygame.sprite.Sprite):
         super().__init__()
         self.image = pygame.Surface((BULLET_WIDTH, BULLET_HEIGHT), pygame.SRCALPHA)
         pygame.draw.rect(self.image, BULLET_COLOR, (0, 0, BULLET_WIDTH, BULLET_HEIGHT))
-        # Brilho no centro do tiro
         pygame.draw.rect(self.image, WHITE, (1, 1, BULLET_WIDTH - 2, BULLET_HEIGHT - 2))
         self.rect = self.image.get_rect()
         self.rect.centerx = x
@@ -186,6 +187,71 @@ class Bullet(pygame.sprite.Sprite):
         """Move o tiro para cima e o remove se sair da tela."""
         self.rect.y += self.speed
         if self.rect.bottom < 0:
+            self.kill()
+ 
+ 
+class Enemy(pygame.sprite.Sprite):
+    """Nave inimiga que desce pela tela.
+ 
+    Cada inimigo tem velocidade aleatória e aparece em uma posição
+    horizontal aleatória no topo da tela. É destruído ao sair pela
+    parte de baixo.
+ 
+    Attributes:
+        image: Superfície com o desenho do inimigo.
+        rect: Retângulo de posição e colisão.
+        speed: Velocidade vertical de descida.
+    """
+ 
+    # Cores possíveis para os inimigos
+    COLORS = [RED, ORANGE, MAGENTA, GREEN]
+ 
+    def __init__(self):
+        """Inicializa o inimigo em posição aleatória acima da tela."""
+        super().__init__()
+        self.color = random.choice(self.COLORS)
+        self.image = self._create_enemy_image()
+        self.rect = self.image.get_rect()
+        self.rect.x = random.randint(0, SCREEN_WIDTH - ENEMY_WIDTH)
+        self.rect.y = random.randint(-80, -ENEMY_HEIGHT)
+        self.speed = random.uniform(ENEMY_MIN_SPEED, ENEMY_MAX_SPEED)
+ 
+    def _create_enemy_image(self):
+        """Cria o sprite do inimigo com formato de losango.
+ 
+        Returns:
+            pygame.Surface: Superfície com o desenho do inimigo.
+        """
+        surface = pygame.Surface((ENEMY_WIDTH, ENEMY_HEIGHT), pygame.SRCALPHA)
+ 
+        # Corpo do inimigo (losango)
+        body_points = [
+            (ENEMY_WIDTH // 2, 0),
+            (ENEMY_WIDTH, ENEMY_HEIGHT // 2),
+            (ENEMY_WIDTH // 2, ENEMY_HEIGHT),
+            (0, ENEMY_HEIGHT // 2),
+        ]
+        pygame.draw.polygon(surface, self.color, body_points)
+ 
+        # Detalhe interno
+        inner_points = [
+            (ENEMY_WIDTH // 2, 6),
+            (ENEMY_WIDTH - 6, ENEMY_HEIGHT // 2),
+            (ENEMY_WIDTH // 2, ENEMY_HEIGHT - 6),
+            (6, ENEMY_HEIGHT // 2),
+        ]
+        pygame.draw.polygon(surface, DARK_GRAY, inner_points)
+ 
+        # Olho central
+        pygame.draw.circle(surface, WHITE, (ENEMY_WIDTH // 2, ENEMY_HEIGHT // 2), 4)
+        pygame.draw.circle(surface, RED, (ENEMY_WIDTH // 2, ENEMY_HEIGHT // 2), 2)
+ 
+        return surface
+ 
+    def update(self):
+        """Move o inimigo para baixo e o remove se sair da tela."""
+        self.rect.y += self.speed
+        if self.rect.top > SCREEN_HEIGHT:
             self.kill()
  
  
@@ -203,6 +269,8 @@ class Game:
         playing: Flag que indica se uma partida está em andamento.
         all_sprites: Grupo com todos os sprites do jogo.
         bullets: Grupo com os tiros do jogador.
+        enemies: Grupo com os inimigos.
+        last_enemy_spawn: Timestamp do último spawn de inimigo.
     """
  
     def __init__(self):
@@ -220,8 +288,10 @@ class Game:
         """Inicia uma nova partida, criando os grupos de sprites e o jogador."""
         self.all_sprites = pygame.sprite.Group()
         self.bullets = pygame.sprite.Group()
+        self.enemies = pygame.sprite.Group()
         self.player = Player(self.bullets, self.all_sprites)
         self.all_sprites.add(self.player)
+        self.last_enemy_spawn = pygame.time.get_ticks()
         self.playing = True
         self.run()
  
@@ -247,8 +317,18 @@ class Game:
                     self.player.shoot()
  
     def update(self):
-        """Atualiza todos os sprites do jogo."""
+        """Atualiza todos os sprites e faz o spawn de inimigos."""
         self.all_sprites.update()
+        self._spawn_enemies()
+ 
+    def _spawn_enemies(self):
+        """Cria novos inimigos periodicamente, respeitando o limite máximo."""
+        now = pygame.time.get_ticks()
+        if now - self.last_enemy_spawn >= ENEMY_SPAWN_DELAY and len(self.enemies) < MAX_ENEMIES:
+            self.last_enemy_spawn = now
+            enemy = Enemy()
+            self.enemies.add(enemy)
+            self.all_sprites.add(enemy)
  
     def draw(self):
         """Desenha todos os elementos na tela."""
