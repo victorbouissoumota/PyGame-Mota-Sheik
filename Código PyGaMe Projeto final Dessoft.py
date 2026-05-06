@@ -33,6 +33,13 @@ PLAYER_SPEED = 5
 PLAYER_WIDTH = 40
 PLAYER_HEIGHT = 50
  
+# Tiros
+BULLET_SPEED = -8
+BULLET_WIDTH = 4
+BULLET_HEIGHT = 12
+BULLET_COLOR = YELLOW
+SHOOT_DELAY = 250  # Milissegundos entre cada tiro
+ 
  
 # =============================================================================
 # SPRITES
@@ -42,22 +49,32 @@ class Player(pygame.sprite.Sprite):
     """Nave controlada pelo jogador.
  
     A nave se move nas quatro direções usando as setas do teclado
-    ou WASD, e fica limitada às bordas da tela.
+    ou WASD, e fica limitada às bordas da tela. Atira com a barra
+    de espaço.
  
     Attributes:
         image: Superfície com o desenho da nave.
         rect: Retângulo de posição e colisão.
         speed: Velocidade de movimentação em pixels por frame.
+        last_shot: Timestamp do último tiro disparado.
     """
  
-    def __init__(self):
-        """Inicializa a nave no centro inferior da tela."""
+    def __init__(self, bullet_group, all_sprites_group):
+        """Inicializa a nave no centro inferior da tela.
+ 
+        Args:
+            bullet_group: Grupo de sprites para adicionar os tiros.
+            all_sprites_group: Grupo geral de sprites do jogo.
+        """
         super().__init__()
         self.image = self._create_ship_image()
         self.rect = self.image.get_rect()
         self.rect.centerx = SCREEN_WIDTH // 2
         self.rect.bottom = SCREEN_HEIGHT - 20
         self.speed = PLAYER_SPEED
+        self.bullet_group = bullet_group
+        self.all_sprites_group = all_sprites_group
+        self.last_shot = 0
  
     def _create_ship_image(self):
         """Cria o sprite da nave desenhando um formato de nave.
@@ -69,9 +86,9 @@ class Player(pygame.sprite.Sprite):
  
         # Corpo principal da nave (triângulo)
         body_points = [
-            (PLAYER_WIDTH // 2, 0),          # Ponta superior (nariz)
-            (0, PLAYER_HEIGHT),               # Base esquerda
-            (PLAYER_WIDTH, PLAYER_HEIGHT),    # Base direita
+            (PLAYER_WIDTH // 2, 0),
+            (0, PLAYER_HEIGHT),
+            (PLAYER_WIDTH, PLAYER_HEIGHT),
         ]
         pygame.draw.polygon(surface, CYAN, body_points)
  
@@ -110,8 +127,20 @@ class Player(pygame.sprite.Sprite):
         self.rect.x += dx
         self.rect.y += dy
  
-        # Limita a nave às bordas da tela
         self._clamp_to_screen()
+ 
+    def shoot(self):
+        """Dispara um tiro se o tempo de recarga já passou.
+ 
+        Cria um objeto Bullet na posição da ponta da nave e adiciona
+        aos grupos de sprites correspondentes.
+        """
+        now = pygame.time.get_ticks()
+        if now - self.last_shot >= SHOOT_DELAY:
+            self.last_shot = now
+            bullet = Bullet(self.rect.centerx, self.rect.top)
+            self.bullet_group.add(bullet)
+            self.all_sprites_group.add(bullet)
  
     def _clamp_to_screen(self):
         """Impede que a nave saia dos limites da tela."""
@@ -123,6 +152,41 @@ class Player(pygame.sprite.Sprite):
             self.rect.top = 0
         if self.rect.bottom > SCREEN_HEIGHT:
             self.rect.bottom = SCREEN_HEIGHT
+ 
+ 
+class Bullet(pygame.sprite.Sprite):
+    """Projétil disparado pela nave do jogador.
+ 
+    O tiro se move para cima e é destruído ao sair da tela.
+ 
+    Attributes:
+        image: Superfície com o desenho do tiro.
+        rect: Retângulo de posição e colisão.
+        speed: Velocidade vertical do tiro (negativa = para cima).
+    """
+ 
+    def __init__(self, x, y):
+        """Inicializa o tiro na posição especificada.
+ 
+        Args:
+            x: Posição horizontal do centro do tiro.
+            y: Posição vertical do topo do tiro.
+        """
+        super().__init__()
+        self.image = pygame.Surface((BULLET_WIDTH, BULLET_HEIGHT), pygame.SRCALPHA)
+        pygame.draw.rect(self.image, BULLET_COLOR, (0, 0, BULLET_WIDTH, BULLET_HEIGHT))
+        # Brilho no centro do tiro
+        pygame.draw.rect(self.image, WHITE, (1, 1, BULLET_WIDTH - 2, BULLET_HEIGHT - 2))
+        self.rect = self.image.get_rect()
+        self.rect.centerx = x
+        self.rect.bottom = y
+        self.speed = BULLET_SPEED
+ 
+    def update(self):
+        """Move o tiro para cima e o remove se sair da tela."""
+        self.rect.y += self.speed
+        if self.rect.bottom < 0:
+            self.kill()
  
  
 # =============================================================================
@@ -138,6 +202,7 @@ class Game:
         running: Flag que indica se o jogo está em execução.
         playing: Flag que indica se uma partida está em andamento.
         all_sprites: Grupo com todos os sprites do jogo.
+        bullets: Grupo com os tiros do jogador.
     """
  
     def __init__(self):
@@ -154,7 +219,8 @@ class Game:
     def new_game(self):
         """Inicia uma nova partida, criando os grupos de sprites e o jogador."""
         self.all_sprites = pygame.sprite.Group()
-        self.player = Player()
+        self.bullets = pygame.sprite.Group()
+        self.player = Player(self.bullets, self.all_sprites)
         self.all_sprites.add(self.player)
         self.playing = True
         self.run()
@@ -177,6 +243,8 @@ class Game:
                 if event.key == pygame.K_ESCAPE:
                     self.playing = False
                     self.running = False
+                elif event.key == pygame.K_SPACE:
+                    self.player.shoot()
  
     def update(self):
         """Atualiza todos os sprites do jogo."""
@@ -207,4 +275,3 @@ if __name__ == "__main__":
         game.new_game()
  
     pygame.quit()
- 
