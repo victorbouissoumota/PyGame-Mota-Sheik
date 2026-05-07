@@ -35,6 +35,8 @@ MAGENTA = (255, 0, 200)
 PLAYER_SPEED = 5
 PLAYER_WIDTH = 40
 PLAYER_HEIGHT = 50
+PLAYER_LIVES = 3
+PLAYER_INVINCIBLE_TIME = 1500  # Milissegundos de invencibilidade após ser atingido
  
 # Tiros
 BULLET_SPEED = -8
@@ -48,7 +50,7 @@ ENEMY_MIN_SPEED = 2
 ENEMY_MAX_SPEED = 5
 ENEMY_WIDTH = 36
 ENEMY_HEIGHT = 36
-ENEMY_SPAWN_DELAY = 800  # Milissegundos entre cada spawn
+ENEMY_SPAWN_DELAY = 800
 MAX_ENEMIES = 8
  
  
@@ -61,13 +63,16 @@ class Player(pygame.sprite.Sprite):
  
     A nave se move nas quatro direções usando as setas do teclado
     ou WASD, e fica limitada às bordas da tela. Atira com a barra
-    de espaço.
+    de espaço. Pisca quando está invencível após levar dano.
  
     Attributes:
         image: Superfície com o desenho da nave.
         rect: Retângulo de posição e colisão.
         speed: Velocidade de movimentação em pixels por frame.
         last_shot: Timestamp do último tiro disparado.
+        lives: Quantidade de vidas restantes.
+        invincible: Flag que indica se o jogador está invencível.
+        invincible_timer: Timestamp de quando ficou invencível.
     """
  
     def __init__(self, bullet_group, all_sprites_group):
@@ -78,7 +83,8 @@ class Player(pygame.sprite.Sprite):
             all_sprites_group: Grupo geral de sprites do jogo.
         """
         super().__init__()
-        self.image = self._create_ship_image()
+        self.original_image = self._create_ship_image()
+        self.image = self.original_image.copy()
         self.rect = self.image.get_rect()
         self.rect.centerx = SCREEN_WIDTH // 2
         self.rect.bottom = SCREEN_HEIGHT - 20
@@ -86,6 +92,9 @@ class Player(pygame.sprite.Sprite):
         self.bullet_group = bullet_group
         self.all_sprites_group = all_sprites_group
         self.last_shot = 0
+        self.lives = PLAYER_LIVES
+        self.invincible = False
+        self.invincible_timer = 0
  
     def _create_ship_image(self):
         """Cria o sprite da nave desenhando um formato de nave.
@@ -115,7 +124,7 @@ class Player(pygame.sprite.Sprite):
         return surface
  
     def update(self):
-        """Atualiza a posição da nave com base nas teclas pressionadas."""
+        """Atualiza a posição da nave e o estado de invencibilidade."""
         keys = pygame.key.get_pressed()
  
         dx = 0
@@ -134,6 +143,36 @@ class Player(pygame.sprite.Sprite):
         self.rect.y += dy
  
         self._clamp_to_screen()
+        self._update_invincibility()
+ 
+    def _update_invincibility(self):
+        """Gerencia o tempo de invencibilidade e o efeito de piscar."""
+        if self.invincible:
+            elapsed = pygame.time.get_ticks() - self.invincible_timer
+            if elapsed >= PLAYER_INVINCIBLE_TIME:
+                self.invincible = False
+                self.image = self.original_image.copy()
+            else:
+                # Faz a nave piscar alternando visibilidade a cada 100ms
+                if (elapsed // 100) % 2 == 0:
+                    self.image = self.original_image.copy()
+                else:
+                    self.image = pygame.Surface((PLAYER_WIDTH, PLAYER_HEIGHT), pygame.SRCALPHA)
+ 
+    def hit(self):
+        """Processa o dano recebido pelo jogador.
+ 
+        Reduz uma vida e ativa o período de invencibilidade.
+ 
+        Returns:
+            bool: True se o jogador ainda tem vidas, False se morreu.
+        """
+        if not self.invincible:
+            self.lives -= 1
+            self.invincible = True
+            self.invincible_timer = pygame.time.get_ticks()
+            return self.lives > 0
+        return True
  
     def shoot(self):
         """Dispara um tiro se o tempo de recarga já passou."""
@@ -203,7 +242,6 @@ class Enemy(pygame.sprite.Sprite):
         speed: Velocidade vertical de descida.
     """
  
-    # Cores possíveis para os inimigos
     COLORS = [RED, ORANGE, MAGENTA, GREEN]
  
     def __init__(self):
@@ -224,7 +262,6 @@ class Enemy(pygame.sprite.Sprite):
         """
         surface = pygame.Surface((ENEMY_WIDTH, ENEMY_HEIGHT), pygame.SRCALPHA)
  
-        # Corpo do inimigo (losango)
         body_points = [
             (ENEMY_WIDTH // 2, 0),
             (ENEMY_WIDTH, ENEMY_HEIGHT // 2),
@@ -233,7 +270,6 @@ class Enemy(pygame.sprite.Sprite):
         ]
         pygame.draw.polygon(surface, self.color, body_points)
  
-        # Detalhe interno
         inner_points = [
             (ENEMY_WIDTH // 2, 6),
             (ENEMY_WIDTH - 6, ENEMY_HEIGHT // 2),
@@ -242,7 +278,6 @@ class Enemy(pygame.sprite.Sprite):
         ]
         pygame.draw.polygon(surface, DARK_GRAY, inner_points)
  
-        # Olho central
         pygame.draw.circle(surface, WHITE, (ENEMY_WIDTH // 2, ENEMY_HEIGHT // 2), 4)
         pygame.draw.circle(surface, RED, (ENEMY_WIDTH // 2, ENEMY_HEIGHT // 2), 2)
  
@@ -271,6 +306,7 @@ class Game:
         bullets: Grupo com os tiros do jogador.
         enemies: Grupo com os inimigos.
         last_enemy_spawn: Timestamp do último spawn de inimigo.
+        score: Pontuação atual do jogador.
     """
  
     def __init__(self):
@@ -283,6 +319,7 @@ class Game:
         self.running = True
         self.playing = False
         self.font = pygame.font.SysFont("arial", 18)
+        self.font_big = pygame.font.SysFont("arial", 48)
  
     def new_game(self):
         """Inicia uma nova partida, criando os grupos de sprites e o jogador."""
@@ -292,6 +329,7 @@ class Game:
         self.player = Player(self.bullets, self.all_sprites)
         self.all_sprites.add(self.player)
         self.last_enemy_spawn = pygame.time.get_ticks()
+        self.score = 0
         self.playing = True
         self.run()
  
@@ -317,9 +355,10 @@ class Game:
                     self.player.shoot()
  
     def update(self):
-        """Atualiza todos os sprites e faz o spawn de inimigos."""
+        """Atualiza todos os sprites, spawna inimigos e verifica colisões."""
         self.all_sprites.update()
         self._spawn_enemies()
+        self._check_collisions()
  
     def _spawn_enemies(self):
         """Cria novos inimigos periodicamente, respeitando o limite máximo."""
@@ -330,17 +369,66 @@ class Game:
             self.enemies.add(enemy)
             self.all_sprites.add(enemy)
  
+    def _check_collisions(self):
+        """Verifica e processa todas as colisões do jogo.
+ 
+        Tiro x Inimigo: destrói ambos e soma pontos.
+        Inimigo x Jogador: o jogador perde uma vida e fica invencível.
+        """
+        # Tiro x Inimigo: True, True = destrói ambos
+        hits = pygame.sprite.groupcollide(self.bullets, self.enemies, True, True)
+        for bullet, enemies_hit in hits.items():
+            self.score += 100 * len(enemies_hit)
+ 
+        # Inimigo x Jogador
+        if not self.player.invincible:
+            enemy_hits = pygame.sprite.spritecollide(self.player, self.enemies, True)
+            if enemy_hits:
+                alive = self.player.hit()
+                if not alive:
+                    self._game_over()
+ 
+    def _game_over(self):
+        """Exibe a tela de game over temporária e encerra a partida."""
+        self.screen.fill(BLACK)
+ 
+        game_over_text = self.font_big.render("GAME OVER", True, RED)
+        score_text = self.font.render(f"Pontuação: {self.score}", True, WHITE)
+ 
+        self.screen.blit(
+            game_over_text,
+            (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, SCREEN_HEIGHT // 3),
+        )
+        self.screen.blit(
+            score_text,
+            (SCREEN_WIDTH // 2 - score_text.get_width() // 2, SCREEN_HEIGHT // 2),
+        )
+ 
+        pygame.display.flip()
+        pygame.time.wait(3000)
+ 
+        self.playing = False
+ 
     def draw(self):
         """Desenha todos os elementos na tela."""
         self.screen.fill(BLACK)
         self.all_sprites.draw(self.screen)
-        self._draw_fps()
+        self._draw_hud()
         pygame.display.flip()
  
-    def _draw_fps(self):
-        """Desenha o contador de FPS no canto superior esquerdo."""
+    def _draw_hud(self):
+        """Desenha o HUD com vidas, pontuação e FPS."""
+        # FPS
         fps_text = self.font.render(f"FPS: {int(self.clock.get_fps())}", True, WHITE)
         self.screen.blit(fps_text, (5, 5))
+ 
+        # Pontuação
+        score_text = self.font.render(f"Pontuação: {self.score}", True, WHITE)
+        self.screen.blit(score_text, (SCREEN_WIDTH // 2 - score_text.get_width() // 2, 5))
+ 
+        # Vidas (desenha pequenas naves)
+        lives_text = self.font.render(f"Vidas: {self.player.lives}", True, WHITE)
+        self.screen.blit(lives_text, (SCREEN_WIDTH - lives_text.get_width() - 10, 5))
  
  
 # =============================================================================
