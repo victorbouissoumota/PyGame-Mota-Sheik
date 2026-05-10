@@ -31,6 +31,7 @@ CYAN = (0, 255, 255)
 DARK_GRAY = (40, 40, 40)
 ORANGE = (255, 165, 0)
 MAGENTA = (255, 0, 200)
+LIGHT_BLUE = (100, 200, 255)
 
 # Jogador
 PLAYER_SPEED = 5
@@ -58,7 +59,15 @@ MAX_ENEMIES = 8
 EXPLOSION_PARTICLES = 15
 PARTICLE_MIN_SPEED = 1
 PARTICLE_MAX_SPEED = 5
-PARTICLE_LIFETIME = 500  # Milissegundos
+PARTICLE_LIFETIME = 500
+
+# Power-ups
+POWERUP_SPEED = 2
+POWERUP_SIZE = 24
+POWERUP_SPAWN_CHANCE = 25  # Porcentagem de chance ao destruir um inimigo
+TRIPLE_SHOT_DURATION = 5000  # Milissegundos
+SHIELD_DURATION = 6000
+BOMB_FLASH_DURATION = 300
 
 
 # =============================================================================
@@ -80,6 +89,10 @@ class Player(pygame.sprite.Sprite):
         lives: Quantidade de vidas restantes.
         invincible: Flag que indica se o jogador está invencível.
         invincible_timer: Timestamp de quando ficou invencível.
+        triple_shot: Flag que indica se o tiro triplo está ativo.
+        triple_shot_timer: Timestamp de quando o tiro triplo foi ativado.
+        shield: Flag que indica se o escudo está ativo.
+        shield_timer: Timestamp de quando o escudo foi ativado.
     """
 
     def __init__(self, bullet_group, all_sprites_group):
@@ -102,6 +115,10 @@ class Player(pygame.sprite.Sprite):
         self.lives = PLAYER_LIVES
         self.invincible = False
         self.invincible_timer = 0
+        self.triple_shot = False
+        self.triple_shot_timer = 0
+        self.shield = False
+        self.shield_timer = 0
 
     def _create_ship_image(self):
         """Cria o sprite da nave desenhando um formato de nave.
@@ -131,7 +148,7 @@ class Player(pygame.sprite.Sprite):
         return surface
 
     def update(self):
-        """Atualiza a posição da nave e o estado de invencibilidade."""
+        """Atualiza a posição da nave, invencibilidade e power-ups."""
         keys = pygame.key.get_pressed()
 
         dx = 0
@@ -151,6 +168,7 @@ class Player(pygame.sprite.Sprite):
 
         self._clamp_to_screen()
         self._update_invincibility()
+        self._update_powerups()
 
     def _update_invincibility(self):
         """Gerencia o tempo de invencibilidade e o efeito de piscar."""
@@ -165,29 +183,76 @@ class Player(pygame.sprite.Sprite):
                 else:
                     self.image = pygame.Surface((PLAYER_WIDTH, PLAYER_HEIGHT), pygame.SRCALPHA)
 
+    def _update_powerups(self):
+        """Verifica se os power-ups ativos já expiraram."""
+        now = pygame.time.get_ticks()
+        if self.triple_shot and now - self.triple_shot_timer >= TRIPLE_SHOT_DURATION:
+            self.triple_shot = False
+        if self.shield and now - self.shield_timer >= SHIELD_DURATION:
+            self.shield = False
+
+    def activate_triple_shot(self):
+        """Ativa o power-up de tiro triplo."""
+        self.triple_shot = True
+        self.triple_shot_timer = pygame.time.get_ticks()
+
+    def activate_shield(self):
+        """Ativa o power-up de escudo."""
+        self.shield = True
+        self.shield_timer = pygame.time.get_ticks()
+
     def hit(self):
         """Processa o dano recebido pelo jogador.
 
-        Reduz uma vida e ativa o período de invencibilidade.
+        Se o escudo estiver ativo, absorve o dano e desativa o escudo.
+        Caso contrário, reduz uma vida e ativa invencibilidade.
 
         Returns:
             bool: True se o jogador ainda tem vidas, False se morreu.
         """
-        if not self.invincible:
-            self.lives -= 1
+        if self.invincible:
+            return True
+        if self.shield:
+            self.shield = False
             self.invincible = True
             self.invincible_timer = pygame.time.get_ticks()
-            return self.lives > 0
-        return True
+            return True
+        self.lives -= 1
+        self.invincible = True
+        self.invincible_timer = pygame.time.get_ticks()
+        return self.lives > 0
 
     def shoot(self):
-        """Dispara um tiro se o tempo de recarga já passou."""
+        """Dispara tiros. Se tiro triplo ativo, dispara 3 tiros."""
         now = pygame.time.get_ticks()
         if now - self.last_shot >= SHOOT_DELAY:
             self.last_shot = now
-            bullet = Bullet(self.rect.centerx, self.rect.top)
-            self.bullet_group.add(bullet)
-            self.all_sprites_group.add(bullet)
+            if self.triple_shot:
+                # Tiro central
+                b1 = Bullet(self.rect.centerx, self.rect.top, 0)
+                # Tiro esquerdo (levemente diagonal)
+                b2 = Bullet(self.rect.left + 5, self.rect.top + 10, -2)
+                # Tiro direito (levemente diagonal)
+                b3 = Bullet(self.rect.right - 5, self.rect.top + 10, 2)
+                for b in [b1, b2, b3]:
+                    self.bullet_group.add(b)
+                    self.all_sprites_group.add(b)
+            else:
+                bullet = Bullet(self.rect.centerx, self.rect.top, 0)
+                self.bullet_group.add(bullet)
+                self.all_sprites_group.add(bullet)
+
+    def draw_shield(self, screen):
+        """Desenha o efeito visual do escudo ao redor da nave.
+
+        Args:
+            screen: Superfície onde o escudo será desenhado.
+        """
+        if self.shield:
+            # Efeito de pulsar usando seno
+            pulse = int(3 * math.sin(pygame.time.get_ticks() / 150))
+            radius = max(PLAYER_WIDTH // 2, PLAYER_HEIGHT // 2) + 8 + pulse
+            pygame.draw.circle(screen, LIGHT_BLUE, self.rect.center, radius, 2)
 
     def _clamp_to_screen(self):
         """Impede que a nave saia dos limites da tela."""
@@ -204,20 +269,23 @@ class Player(pygame.sprite.Sprite):
 class Bullet(pygame.sprite.Sprite):
     """Projétil disparado pela nave do jogador.
 
-    O tiro se move para cima e é destruído ao sair da tela.
+    O tiro se move para cima e pode ter um desvio horizontal
+    para tiros diagonais (tiro triplo).
 
     Attributes:
         image: Superfície com o desenho do tiro.
         rect: Retângulo de posição e colisão.
-        speed: Velocidade vertical do tiro (negativa = para cima).
+        speed_y: Velocidade vertical do tiro.
+        speed_x: Velocidade horizontal do tiro (0 para tiro reto).
     """
 
-    def __init__(self, x, y):
+    def __init__(self, x, y, speed_x=0):
         """Inicializa o tiro na posição especificada.
 
         Args:
             x: Posição horizontal do centro do tiro.
             y: Posição vertical do topo do tiro.
+            speed_x: Velocidade horizontal (0 = reto, negativo = esquerda).
         """
         super().__init__()
         self.image = pygame.Surface((BULLET_WIDTH, BULLET_HEIGHT), pygame.SRCALPHA)
@@ -226,12 +294,14 @@ class Bullet(pygame.sprite.Sprite):
         self.rect = self.image.get_rect()
         self.rect.centerx = x
         self.rect.bottom = y
-        self.speed = BULLET_SPEED
+        self.speed_y = BULLET_SPEED
+        self.speed_x = speed_x
 
     def update(self):
-        """Move o tiro para cima e o remove se sair da tela."""
-        self.rect.y += self.speed
-        if self.rect.bottom < 0:
+        """Move o tiro e o remove se sair da tela."""
+        self.rect.y += self.speed_y
+        self.rect.x += self.speed_x
+        if self.rect.bottom < 0 or self.rect.right < 0 or self.rect.left > SCREEN_WIDTH:
             self.kill()
 
 
@@ -239,8 +309,7 @@ class Enemy(pygame.sprite.Sprite):
     """Nave inimiga que desce pela tela.
 
     Cada inimigo tem velocidade aleatória e aparece em uma posição
-    horizontal aleatória no topo da tela. É destruído ao sair pela
-    parte de baixo.
+    horizontal aleatória no topo da tela.
 
     Attributes:
         image: Superfície com o desenho do inimigo.
@@ -296,6 +365,83 @@ class Enemy(pygame.sprite.Sprite):
             self.kill()
 
 
+class PowerUp(pygame.sprite.Sprite):
+    """Item de power-up que cai pela tela após destruir um inimigo.
+
+    Existem três tipos: tiro triplo, escudo e bomba. Cada um tem
+    um visual e efeito diferente.
+
+    Attributes:
+        image: Superfície com o desenho do power-up.
+        rect: Retângulo de posição e colisão.
+        speed: Velocidade de queda.
+        kind: Tipo do power-up ('triple', 'shield' ou 'bomb').
+    """
+
+    TYPES = ["triple", "shield", "bomb"]
+
+    def __init__(self, x, y):
+        """Inicializa o power-up na posição do inimigo destruído.
+
+        Args:
+            x: Posição horizontal do centro.
+            y: Posição vertical do centro.
+        """
+        super().__init__()
+        self.kind = random.choice(self.TYPES)
+        self.image = self._create_powerup_image()
+        self.rect = self.image.get_rect()
+        self.rect.centerx = x
+        self.rect.centery = y
+        self.speed = POWERUP_SPEED
+        self.spawn_time = pygame.time.get_ticks()
+
+    def _create_powerup_image(self):
+        """Cria o sprite do power-up baseado no tipo.
+
+        Returns:
+            pygame.Surface: Superfície com o desenho do power-up.
+        """
+        surface = pygame.Surface((POWERUP_SIZE, POWERUP_SIZE), pygame.SRCALPHA)
+
+        if self.kind == "triple":
+            # Triângulo amarelo - tiro triplo
+            pygame.draw.polygon(surface, YELLOW, [
+                (POWERUP_SIZE // 2, 2),
+                (2, POWERUP_SIZE - 2),
+                (POWERUP_SIZE - 2, POWERUP_SIZE - 2),
+            ])
+            pygame.draw.polygon(surface, ORANGE, [
+                (POWERUP_SIZE // 2, 6),
+                (6, POWERUP_SIZE - 4),
+                (POWERUP_SIZE - 6, POWERUP_SIZE - 4),
+            ])
+
+        elif self.kind == "shield":
+            # Círculo azul - escudo
+            pygame.draw.circle(surface, LIGHT_BLUE, (POWERUP_SIZE // 2, POWERUP_SIZE // 2), POWERUP_SIZE // 2 - 1)
+            pygame.draw.circle(surface, BLUE, (POWERUP_SIZE // 2, POWERUP_SIZE // 2), POWERUP_SIZE // 2 - 4)
+            pygame.draw.circle(surface, LIGHT_BLUE, (POWERUP_SIZE // 2, POWERUP_SIZE // 2), 4)
+
+        elif self.kind == "bomb":
+            # Quadrado vermelho - bomba
+            pygame.draw.rect(surface, RED, (2, 2, POWERUP_SIZE - 4, POWERUP_SIZE - 4))
+            pygame.draw.rect(surface, ORANGE, (6, 6, POWERUP_SIZE - 12, POWERUP_SIZE - 12))
+            pygame.draw.rect(surface, YELLOW, (9, 9, POWERUP_SIZE - 18, POWERUP_SIZE - 18))
+
+        return surface
+
+    def update(self):
+        """Move o power-up para baixo e o remove se sair da tela."""
+        self.rect.y += self.speed
+
+        # Efeito de flutuar (oscilação horizontal)
+        self.rect.x += int(math.sin(pygame.time.get_ticks() / 200) * 0.8)
+
+        if self.rect.top > SCREEN_HEIGHT:
+            self.kill()
+
+
 class Particle(pygame.sprite.Sprite):
     """Partícula individual de uma explosão.
 
@@ -325,7 +471,6 @@ class Particle(pygame.sprite.Sprite):
         self.pos_x = float(x)
         self.pos_y = float(y)
 
-        # Direção e velocidade aleatórias
         angle = random.uniform(0, 2 * math.pi)
         speed = random.uniform(PARTICLE_MIN_SPEED, PARTICLE_MAX_SPEED)
         self.vel_x = math.cos(angle) * speed
@@ -336,7 +481,6 @@ class Particle(pygame.sprite.Sprite):
         self.radius = self.initial_radius
         self.spawn_time = pygame.time.get_ticks()
 
-        # Cria a imagem inicial
         self._update_image()
 
     def _update_image(self):
@@ -354,15 +498,12 @@ class Particle(pygame.sprite.Sprite):
             self.kill()
             return
 
-        # Move a partícula
         self.pos_x += self.vel_x
         self.pos_y += self.vel_y
 
-        # Desacelera gradualmente
         self.vel_x *= 0.96
         self.vel_y *= 0.96
 
-        # Encolhe proporcionalmente ao tempo de vida restante
         life_ratio = 1 - (elapsed / PARTICLE_LIFETIME)
         self.radius = max(int(self.initial_radius * life_ratio), 1)
 
@@ -370,27 +511,28 @@ class Particle(pygame.sprite.Sprite):
 
 
 class Explosion:
-    """Gerencia a criação de uma explosão com múltiplas partículas.
+    """Gerencia a criação de uma explosão com múltiplas partículas."""
 
-    Esta classe não é um sprite, apenas serve como fábrica de partículas
-    que são adicionadas ao grupo de sprites fornecido.
-    """
-
-    # Cores possíveis das partículas de explosão
     COLORS = [YELLOW, ORANGE, RED, WHITE]
 
     @staticmethod
-    def create(x, y, all_sprites_group):
+    def create(x, y, all_sprites_group, big=False):
         """Cria uma explosão gerando várias partículas na posição dada.
 
         Args:
             x: Posição horizontal do centro da explosão.
             y: Posição vertical do centro da explosão.
             all_sprites_group: Grupo onde as partículas serão adicionadas.
+            big: Se True, cria uma explosão maior (para bomba).
         """
-        for _ in range(EXPLOSION_PARTICLES):
+        count = EXPLOSION_PARTICLES * 3 if big else EXPLOSION_PARTICLES
+        for _ in range(count):
             color = random.choice(Explosion.COLORS)
             particle = Particle(x, y, color)
+            if big:
+                particle.vel_x *= 2
+                particle.vel_y *= 2
+                particle.initial_radius = random.randint(3, 7)
             all_sprites_group.add(particle)
 
 
@@ -409,8 +551,10 @@ class Game:
         all_sprites: Grupo com todos os sprites do jogo.
         bullets: Grupo com os tiros do jogador.
         enemies: Grupo com os inimigos.
+        powerups: Grupo com os power-ups.
         last_enemy_spawn: Timestamp do último spawn de inimigo.
         score: Pontuação atual do jogador.
+        bomb_flash: Timestamp do flash da bomba (efeito visual).
     """
 
     def __init__(self):
@@ -430,10 +574,12 @@ class Game:
         self.all_sprites = pygame.sprite.Group()
         self.bullets = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
+        self.powerups = pygame.sprite.Group()
         self.player = Player(self.bullets, self.all_sprites)
         self.all_sprites.add(self.player)
         self.last_enemy_spawn = pygame.time.get_ticks()
         self.score = 0
+        self.bomb_flash = 0
         self.playing = True
         self.run()
 
@@ -463,6 +609,7 @@ class Game:
         self.all_sprites.update()
         self._spawn_enemies()
         self._check_collisions()
+        self._check_powerup_collisions()
 
     def _spawn_enemies(self):
         """Cria novos inimigos periodicamente, respeitando o limite máximo."""
@@ -476,7 +623,8 @@ class Game:
     def _check_collisions(self):
         """Verifica e processa todas as colisões do jogo.
 
-        Tiro x Inimigo: destrói ambos, soma pontos e cria explosão.
+        Tiro x Inimigo: destrói ambos, soma pontos, cria explosão e
+        pode dropar um power-up.
         Inimigo x Jogador: o jogador perde uma vida e fica invencível.
         """
         # Tiro x Inimigo
@@ -485,6 +633,12 @@ class Game:
             for enemy in enemies_hit:
                 self.score += 100
                 Explosion.create(enemy.rect.centerx, enemy.rect.centery, self.all_sprites)
+
+                # Chance de dropar power-up
+                if random.randint(1, 100) <= POWERUP_SPAWN_CHANCE:
+                    powerup = PowerUp(enemy.rect.centerx, enemy.rect.centery)
+                    self.powerups.add(powerup)
+                    self.all_sprites.add(powerup)
 
         # Inimigo x Jogador
         if not self.player.invincible:
@@ -496,6 +650,25 @@ class Game:
                 if not alive:
                     Explosion.create(self.player.rect.centerx, self.player.rect.centery, self.all_sprites)
                     self._game_over()
+
+    def _check_powerup_collisions(self):
+        """Verifica se o jogador coletou algum power-up e aplica o efeito."""
+        powerup_hits = pygame.sprite.spritecollide(self.player, self.powerups, True)
+        for powerup in powerup_hits:
+            if powerup.kind == "triple":
+                self.player.activate_triple_shot()
+            elif powerup.kind == "shield":
+                self.player.activate_shield()
+            elif powerup.kind == "bomb":
+                self._activate_bomb()
+
+    def _activate_bomb(self):
+        """Ativa a bomba: destrói todos os inimigos na tela com explosões."""
+        self.bomb_flash = pygame.time.get_ticks()
+        for enemy in self.enemies:
+            self.score += 100
+            Explosion.create(enemy.rect.centerx, enemy.rect.centery, self.all_sprites, big=True)
+        self.enemies.empty()
 
     def _game_over(self):
         """Exibe a tela de game over temporária e encerra a partida."""
@@ -521,12 +694,25 @@ class Game:
     def draw(self):
         """Desenha todos os elementos na tela."""
         self.screen.fill(BLACK)
+
+        # Flash branco da bomba
+        if pygame.time.get_ticks() - self.bomb_flash < BOMB_FLASH_DURATION:
+            alpha = 255 * (1 - (pygame.time.get_ticks() - self.bomb_flash) / BOMB_FLASH_DURATION)
+            flash_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+            flash_surface.fill(WHITE)
+            flash_surface.set_alpha(int(alpha))
+            self.screen.blit(flash_surface, (0, 0))
+
         self.all_sprites.draw(self.screen)
+
+        # Desenha escudo por cima da nave
+        self.player.draw_shield(self.screen)
+
         self._draw_hud()
         pygame.display.flip()
 
     def _draw_hud(self):
-        """Desenha o HUD com vidas, pontuação e FPS."""
+        """Desenha o HUD com vidas, pontuação, FPS e indicadores de power-ups."""
         fps_text = self.font.render(f"FPS: {int(self.clock.get_fps())}", True, WHITE)
         self.screen.blit(fps_text, (5, 5))
 
@@ -535,6 +721,18 @@ class Game:
 
         lives_text = self.font.render(f"Vidas: {self.player.lives}", True, WHITE)
         self.screen.blit(lives_text, (SCREEN_WIDTH - lives_text.get_width() - 10, 5))
+
+        # Indicadores de power-ups ativos
+        y_indicator = 30
+        if self.player.triple_shot:
+            remaining = max(0, TRIPLE_SHOT_DURATION - (pygame.time.get_ticks() - self.player.triple_shot_timer))
+            text = self.font.render(f"Tiro Triplo: {remaining // 1000 + 1}s", True, YELLOW)
+            self.screen.blit(text, (5, y_indicator))
+            y_indicator += 20
+        if self.player.shield:
+            remaining = max(0, SHIELD_DURATION - (pygame.time.get_ticks() - self.player.shield_timer))
+            text = self.font.render(f"Escudo: {remaining // 1000 + 1}s", True, LIGHT_BLUE)
+            self.screen.blit(text, (5, y_indicator))
 
 
 # =============================================================================
