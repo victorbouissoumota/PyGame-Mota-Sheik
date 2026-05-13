@@ -70,7 +70,7 @@ BOMB_FLASH_DURATION = 300
 
 # Waves
 WAVE_TRANSITION_DURATION = 3000
-BOSS_EVERY_N_WAVES = 5  # Boss aparece a cada N waves
+BOSS_EVERY_N_WAVES = 5
 
 # Boss
 BOSS_WIDTH = 80
@@ -87,48 +87,180 @@ STATE_INSTRUCTIONS = "instructions"
 STATE_PLAYING = "playing"
 STATE_GAME_OVER = "game_over"
 
-# Estrelas de fundo
+# Parallax / Estrelas
 STAR_COUNT = 80
+PARALLAX_LAYERS = 3
 
 
 # =============================================================================
-# ESTRELAS DE FUNDO
+# SISTEMA DE FUNDO (PARALLAX + ESTRELAS)
 # =============================================================================
 
 class Star:
-    """Estrela animada para o fundo dos menus.
+    """Estrela animada para o fundo.
 
     Attributes:
         x: Posição horizontal.
         y: Posição vertical.
         speed: Velocidade de descida.
         size: Tamanho da estrela.
-        brightness: Brilho da estrela (0-255).
+        brightness: Brilho (0-255).
+        layer: Camada de parallax (0 = mais longe, mais lento).
     """
 
-    def __init__(self):
-        """Cria uma estrela em posição aleatória."""
+    def __init__(self, layer=None):
+        """Cria uma estrela em posição aleatória.
+
+        Args:
+            layer: Camada de parallax (None = aleatória).
+        """
+        self.layer = layer if layer is not None else random.randint(0, PARALLAX_LAYERS - 1)
         self.x = random.randint(0, SCREEN_WIDTH)
         self.y = random.randint(0, SCREEN_HEIGHT)
-        self.speed = random.uniform(0.3, 1.5)
-        self.size = random.randint(1, 3)
-        self.brightness = random.randint(100, 255)
+
+        # Estrelas mais próximas (layer maior) são maiores, mais brilhantes e rápidas
+        layer_ratio = (self.layer + 1) / PARALLAX_LAYERS
+        self.speed = 0.3 + layer_ratio * 2.0
+        self.size = max(1, int(layer_ratio * 3))
+        self.brightness = int(80 + layer_ratio * 175)
 
     def update(self):
         """Move a estrela para baixo e reposiciona se sair da tela."""
         self.y += self.speed
         if self.y > SCREEN_HEIGHT:
-            self.y = 0
+            self.y = random.randint(-10, 0)
             self.x = random.randint(0, SCREEN_WIDTH)
 
     def draw(self, screen):
         """Desenha a estrela na tela.
 
         Args:
-            screen: Superfície onde a estrela será desenhada.
+            screen: Superfície de desenho.
         """
         color = (self.brightness, self.brightness, self.brightness)
         pygame.draw.circle(screen, color, (int(self.x), int(self.y)), self.size)
+
+
+class Nebula:
+    """Nuvem de nebulosa que passa lentamente ao fundo.
+
+    Cria um efeito de profundidade com manchas coloridas translúcidas
+    que se movem em velocidades diferentes.
+
+    Attributes:
+        x: Posição horizontal.
+        y: Posição vertical.
+        width: Largura da nebulosa.
+        height: Altura da nebulosa.
+        speed: Velocidade de descida.
+        color: Cor base da nebulosa.
+        surface: Superfície pré-renderizada.
+    """
+
+    COLORS = [
+        (30, 0, 60),    # Roxo escuro
+        (0, 20, 50),    # Azul escuro
+        (40, 0, 20),    # Vinho escuro
+        (0, 30, 30),    # Ciano escuro
+        (20, 20, 0),    # Amarelo escuro
+    ]
+
+    def __init__(self):
+        """Cria uma nebulosa em posição aleatória."""
+        self.width = random.randint(100, 250)
+        self.height = random.randint(60, 150)
+        self.x = random.randint(-50, SCREEN_WIDTH)
+        self.y = random.randint(-self.height, SCREEN_HEIGHT)
+        self.speed = random.uniform(0.1, 0.4)
+        self.color = random.choice(self.COLORS)
+        self.surface = self._create_surface()
+
+    def _create_surface(self):
+        """Cria a superfície translúcida da nebulosa.
+
+        Returns:
+            pygame.Surface: Superfície da nebulosa com transparência.
+        """
+        surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+
+        # Desenha várias elipses sobrepostas para criar uma forma orgânica
+        num_blobs = random.randint(3, 6)
+        for _ in range(num_blobs):
+            blob_x = random.randint(10, self.width - 10)
+            blob_y = random.randint(10, self.height - 10)
+            blob_w = random.randint(30, self.width // 2)
+            blob_h = random.randint(20, self.height // 2)
+            alpha = random.randint(15, 40)
+            blob_color = (*self.color, alpha)
+            blob_surface = pygame.Surface((blob_w, blob_h), pygame.SRCALPHA)
+            pygame.draw.ellipse(blob_surface, blob_color, (0, 0, blob_w, blob_h))
+            surface.blit(blob_surface, (blob_x - blob_w // 2, blob_y - blob_h // 2))
+
+        return surface
+
+    def update(self):
+        """Move a nebulosa para baixo e reposiciona se sair da tela."""
+        self.y += self.speed
+        if self.y > SCREEN_HEIGHT:
+            self.y = random.randint(-self.height * 2, -self.height)
+            self.x = random.randint(-50, SCREEN_WIDTH)
+            self.color = random.choice(self.COLORS)
+            self.surface = self._create_surface()
+
+    def draw(self, screen):
+        """Desenha a nebulosa na tela.
+
+        Args:
+            screen: Superfície de desenho.
+        """
+        screen.blit(self.surface, (int(self.x), int(self.y)))
+
+
+class Background:
+    """Gerencia o fundo do jogo com parallax scrolling.
+
+    Combina estrelas em múltiplas camadas e nebulosas para criar
+    sensação de profundidade e movimento espacial.
+
+    Attributes:
+        stars: Lista de estrelas em diferentes camadas.
+        nebulae: Lista de nebulosas.
+    """
+
+    def __init__(self):
+        """Inicializa o fundo com estrelas e nebulosas."""
+        # Distribui estrelas entre as camadas
+        self.stars = []
+        stars_per_layer = STAR_COUNT // PARALLAX_LAYERS
+        for layer in range(PARALLAX_LAYERS):
+            for _ in range(stars_per_layer):
+                self.stars.append(Star(layer))
+
+        # Nebulosas (poucas, bem ao fundo)
+        self.nebulae = [Nebula() for _ in range(4)]
+
+    def update(self):
+        """Atualiza todas as estrelas e nebulosas."""
+        for nebula in self.nebulae:
+            nebula.update()
+        for star in self.stars:
+            star.update()
+
+    def draw(self, screen):
+        """Desenha o fundo completo: nebulosas primeiro, depois estrelas.
+
+        Args:
+            screen: Superfície de desenho.
+        """
+        # Nebulosas atrás de tudo
+        for nebula in self.nebulae:
+            nebula.draw(screen)
+
+        # Estrelas por camada (de trás pra frente)
+        for layer in range(PARALLAX_LAYERS):
+            for star in self.stars:
+                if star.layer == layer:
+                    star.draw(screen)
 
 
 # =============================================================================
@@ -140,22 +272,22 @@ class WaveManager:
 
     Attributes:
         wave_number: Número da wave atual.
-        enemies_to_spawn: Quantos inimigos faltam spawnar.
-        enemies_alive: Quantos inimigos ainda estão vivos.
+        enemies_to_spawn: Inimigos para spawnar.
+        enemies_alive: Inimigos vivos.
         spawn_delay: Intervalo entre spawns.
         last_spawn: Timestamp do último spawn.
-        enemy_min_speed: Velocidade mínima dos inimigos.
-        enemy_max_speed: Velocidade máxima dos inimigos.
-        max_enemies: Máximo de inimigos simultâneos.
-        transitioning: Flag de transição entre waves.
-        transition_start: Timestamp do início da transição.
-        is_boss_wave: Flag que indica se é uma wave de boss.
-        boss_spawned: Flag que indica se o boss já foi criado.
-        boss_defeated: Flag que indica se o boss foi derrotado.
+        enemy_min_speed: Velocidade mínima.
+        enemy_max_speed: Velocidade máxima.
+        max_enemies: Máximo simultâneo.
+        transitioning: Flag de transição.
+        transition_start: Timestamp da transição.
+        is_boss_wave: Flag de wave de boss.
+        boss_spawned: Flag de boss criado.
+        boss_defeated: Flag de boss derrotado.
     """
 
     def __init__(self):
-        """Inicializa o gerenciador na wave 0."""
+        """Inicializa o gerenciador."""
         self.wave_number = 0
         self.enemies_to_spawn = 0
         self.enemies_alive = 0
@@ -171,23 +303,20 @@ class WaveManager:
         self.boss_defeated = False
 
     def start_next_wave(self):
-        """Configura e inicia a próxima wave."""
+        """Inicia a próxima wave."""
         self.wave_number += 1
         self.transitioning = True
         self.transition_start = pygame.time.get_ticks()
         self.last_spawn = pygame.time.get_ticks()
 
-        # Verifica se é wave de boss
         self.is_boss_wave = (self.wave_number % BOSS_EVERY_N_WAVES == 0)
         self.boss_spawned = False
         self.boss_defeated = False
 
         if self.is_boss_wave:
-            # Wave de boss: sem inimigos comuns
             self.enemies_to_spawn = 0
-            self.enemies_alive = 1  # O boss conta como 1
+            self.enemies_alive = 1
         else:
-            # Wave normal
             self.enemies_to_spawn = 5 + (self.wave_number * 3)
             self.enemies_alive = self.enemies_to_spawn
             self.spawn_delay = max(300, 800 - (self.wave_number * 50))
@@ -196,20 +325,20 @@ class WaveManager:
             self.max_enemies = min(8 + self.wave_number, 15)
 
     def is_wave_complete(self):
-        """Verifica se a wave foi completada.
+        """Verifica se a wave acabou.
 
         Returns:
-            bool: True se todos os inimigos foram eliminados.
+            bool: True se completa.
         """
         if self.is_boss_wave:
             return self.boss_defeated
         return self.enemies_to_spawn <= 0 and self.enemies_alive <= 0
 
     def is_transitioning(self):
-        """Verifica se ainda está na transição.
+        """Verifica se está em transição.
 
         Returns:
-            bool: True se a transição ainda está acontecendo.
+            bool: True se em transição.
         """
         if self.transitioning:
             elapsed = pygame.time.get_ticks() - self.transition_start
@@ -218,21 +347,21 @@ class WaveManager:
         return self.transitioning
 
     def enemy_killed(self):
-        """Registra que um inimigo foi eliminado."""
+        """Registra inimigo eliminado."""
         self.enemies_alive -= 1
 
     def enemy_escaped(self):
-        """Registra que um inimigo saiu da tela."""
+        """Registra inimigo que escapou."""
         self.enemies_alive -= 1
 
     def should_spawn(self, current_enemy_count):
-        """Verifica se é hora de spawnar um novo inimigo.
+        """Verifica se deve spawnar inimigo.
 
         Args:
-            current_enemy_count: Quantidade atual de inimigos na tela.
+            current_enemy_count: Inimigos na tela.
 
         Returns:
-            bool: True se deve spawnar um novo inimigo.
+            bool: True se deve spawnar.
         """
         if self.is_boss_wave or self.transitioning or self.enemies_to_spawn <= 0:
             return False
@@ -246,10 +375,10 @@ class WaveManager:
         return False
 
     def should_spawn_boss(self):
-        """Verifica se é hora de spawnar o boss.
+        """Verifica se deve spawnar o boss.
 
         Returns:
-            bool: True se deve spawnar o boss.
+            bool: True se deve spawnar.
         """
         if self.is_boss_wave and not self.boss_spawned and not self.transitioning:
             self.boss_spawned = True
@@ -257,10 +386,10 @@ class WaveManager:
         return False
 
     def get_boss_level(self):
-        """Retorna o nível do boss baseado na wave.
+        """Retorna o nível do boss.
 
         Returns:
-            int: Nível do boss (1, 2, 3...).
+            int: Nível do boss.
         """
         return self.wave_number // BOSS_EVERY_N_WAVES
 
@@ -273,8 +402,8 @@ class Player(pygame.sprite.Sprite):
     """Nave controlada pelo jogador.
 
     Attributes:
-        image: Superfície com o desenho da nave.
-        rect: Retângulo de posição e colisão.
+        image: Superfície da nave.
+        rect: Retângulo de posição.
         speed: Velocidade de movimentação.
         last_shot: Timestamp do último tiro.
         lives: Vidas restantes.
@@ -287,11 +416,11 @@ class Player(pygame.sprite.Sprite):
     """
 
     def __init__(self, bullet_group, all_sprites_group):
-        """Inicializa a nave no centro inferior da tela.
+        """Inicializa a nave.
 
         Args:
-            bullet_group: Grupo para adicionar tiros.
-            all_sprites_group: Grupo geral de sprites.
+            bullet_group: Grupo de tiros.
+            all_sprites_group: Grupo geral.
         """
         super().__init__()
         self.original_image = self._create_ship_image()
@@ -312,10 +441,10 @@ class Player(pygame.sprite.Sprite):
         self.shield_timer = 0
 
     def _create_ship_image(self):
-        """Cria o sprite da nave.
+        """Cria sprite da nave.
 
         Returns:
-            pygame.Surface: Superfície com o desenho da nave.
+            pygame.Surface: Superfície da nave.
         """
         surface = pygame.Surface((PLAYER_WIDTH, PLAYER_HEIGHT), pygame.SRCALPHA)
 
@@ -341,10 +470,8 @@ class Player(pygame.sprite.Sprite):
     def update(self):
         """Atualiza posição, invencibilidade e power-ups."""
         keys = pygame.key.get_pressed()
-
         dx = 0
         dy = 0
-
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
             dx = -self.speed
         if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
@@ -356,13 +483,12 @@ class Player(pygame.sprite.Sprite):
 
         self.rect.x += dx
         self.rect.y += dy
-
         self._clamp_to_screen()
         self._update_invincibility()
         self._update_powerups()
 
     def _update_invincibility(self):
-        """Gerencia invencibilidade e efeito de piscar."""
+        """Gerencia invencibilidade e piscar."""
         if self.invincible:
             elapsed = pygame.time.get_ticks() - self.invincible_timer
             if elapsed >= PLAYER_INVINCIBLE_TIME:
@@ -375,7 +501,7 @@ class Player(pygame.sprite.Sprite):
                     self.image = pygame.Surface((PLAYER_WIDTH, PLAYER_HEIGHT), pygame.SRCALPHA)
 
     def _update_powerups(self):
-        """Verifica se os power-ups expiraram."""
+        """Verifica expiração de power-ups."""
         now = pygame.time.get_ticks()
         if self.triple_shot and now - self.triple_shot_timer >= TRIPLE_SHOT_DURATION:
             self.triple_shot = False
@@ -393,10 +519,10 @@ class Player(pygame.sprite.Sprite):
         self.shield_timer = pygame.time.get_ticks()
 
     def hit(self):
-        """Processa dano recebido.
+        """Processa dano.
 
         Returns:
-            bool: True se ainda tem vidas.
+            bool: True se ainda vivo.
         """
         if self.invincible:
             return True
@@ -439,7 +565,7 @@ class Player(pygame.sprite.Sprite):
             pygame.draw.circle(screen, LIGHT_BLUE, self.rect.center, radius, 2)
 
     def _clamp_to_screen(self):
-        """Impede a nave de sair da tela."""
+        """Limita nave à tela."""
         if self.rect.left < 0:
             self.rect.left = 0
         if self.rect.right > SCREEN_WIDTH:
@@ -451,11 +577,9 @@ class Player(pygame.sprite.Sprite):
 
 
 class Bullet(pygame.sprite.Sprite):
-    """Projétil disparado pela nave do jogador.
+    """Projétil do jogador.
 
     Attributes:
-        image: Superfície do tiro.
-        rect: Retângulo de posição.
         speed_y: Velocidade vertical.
         speed_x: Velocidade horizontal.
     """
@@ -464,8 +588,8 @@ class Bullet(pygame.sprite.Sprite):
         """Inicializa o tiro.
 
         Args:
-            x: Posição horizontal.
-            y: Posição vertical.
+            x: Posição X.
+            y: Posição Y.
             speed_x: Velocidade horizontal.
         """
         super().__init__()
@@ -479,7 +603,7 @@ class Bullet(pygame.sprite.Sprite):
         self.speed_x = speed_x
 
     def update(self):
-        """Move o tiro e remove se sair da tela."""
+        """Move e remove se fora da tela."""
         self.rect.y += self.speed_y
         self.rect.x += self.speed_x
         if self.rect.bottom < 0 or self.rect.right < 0 or self.rect.left > SCREEN_WIDTH:
@@ -487,11 +611,9 @@ class Bullet(pygame.sprite.Sprite):
 
 
 class Enemy(pygame.sprite.Sprite):
-    """Nave inimiga que desce pela tela.
+    """Nave inimiga.
 
     Attributes:
-        image: Superfície do inimigo.
-        rect: Retângulo de posição.
         speed: Velocidade de descida.
         wave_manager: Referência ao WaveManager.
     """
@@ -522,7 +644,6 @@ class Enemy(pygame.sprite.Sprite):
             pygame.Surface: Superfície do inimigo.
         """
         surface = pygame.Surface((ENEMY_WIDTH, ENEMY_HEIGHT), pygame.SRCALPHA)
-
         body_points = [
             (ENEMY_WIDTH // 2, 0),
             (ENEMY_WIDTH, ENEMY_HEIGHT // 2),
@@ -530,7 +651,6 @@ class Enemy(pygame.sprite.Sprite):
             (0, ENEMY_HEIGHT // 2),
         ]
         pygame.draw.polygon(surface, self.color, body_points)
-
         inner_points = [
             (ENEMY_WIDTH // 2, 6),
             (ENEMY_WIDTH - 6, ENEMY_HEIGHT // 2),
@@ -538,14 +658,12 @@ class Enemy(pygame.sprite.Sprite):
             (6, ENEMY_HEIGHT // 2),
         ]
         pygame.draw.polygon(surface, DARK_GRAY, inner_points)
-
         pygame.draw.circle(surface, WHITE, (ENEMY_WIDTH // 2, ENEMY_HEIGHT // 2), 4)
         pygame.draw.circle(surface, RED, (ENEMY_WIDTH // 2, ENEMY_HEIGHT // 2), 2)
-
         return surface
 
     def update(self):
-        """Move o inimigo e remove se sair da tela."""
+        """Move e remove se fora da tela."""
         self.rect.y += self.speed
         if self.rect.top > SCREEN_HEIGHT:
             self.wave_manager.enemy_escaped()
@@ -555,31 +673,26 @@ class Enemy(pygame.sprite.Sprite):
 class Boss(pygame.sprite.Sprite):
     """Chefe que aparece a cada 5 waves.
 
-    O boss se move horizontalmente no topo da tela, atira projéteis
-    para baixo e tem uma barra de vida. A cada nível fica mais forte.
-
     Attributes:
-        image: Superfície do boss.
-        rect: Retângulo de posição.
         hp: Vida atual.
         max_hp: Vida máxima.
         speed: Velocidade horizontal.
-        direction: Direção atual (1 = direita, -1 = esquerda).
+        direction: Direção (1 ou -1).
         last_shot: Timestamp do último tiro.
         shoot_delay: Intervalo entre tiros.
         level: Nível do boss.
-        entering: Flag de entrada (descendo até a posição).
-        boss_bullets: Grupo de tiros do boss.
-        all_sprites_group: Grupo geral de sprites.
+        entering: Flag de entrada.
+        boss_bullets: Grupo de tiros.
+        all_sprites_group: Grupo geral.
     """
 
     def __init__(self, level, boss_bullets, all_sprites_group):
         """Inicializa o boss.
 
         Args:
-            level: Nível do boss (afeta vida e comportamento).
-            boss_bullets: Grupo para os tiros do boss.
-            all_sprites_group: Grupo geral de sprites.
+            level: Nível do boss.
+            boss_bullets: Grupo de tiros do boss.
+            all_sprites_group: Grupo geral.
         """
         super().__init__()
         self.level = level
@@ -592,105 +705,69 @@ class Boss(pygame.sprite.Sprite):
         self.boss_bullets = boss_bullets
         self.all_sprites_group = all_sprites_group
         self.entering = True
-
         self.image = self._create_boss_image()
         self.rect = self.image.get_rect()
         self.rect.centerx = SCREEN_WIDTH // 2
-        self.rect.bottom = -10  # Começa acima da tela
+        self.rect.bottom = -10
 
     def _create_boss_image(self):
-        """Cria o sprite do boss com visual ameaçador.
+        """Cria sprite do boss.
 
         Returns:
-            pygame.Surface: Superfície com o desenho do boss.
+            pygame.Surface: Superfície do boss.
         """
         surface = pygame.Surface((BOSS_WIDTH, BOSS_HEIGHT), pygame.SRCALPHA)
-
-        # Corpo principal (hexágono achatado)
         body_points = [
-            (BOSS_WIDTH // 2, 0),
-            (BOSS_WIDTH - 5, 15),
-            (BOSS_WIDTH, BOSS_HEIGHT // 2),
-            (BOSS_WIDTH - 5, BOSS_HEIGHT - 10),
-            (5, BOSS_HEIGHT - 10),
-            (0, BOSS_HEIGHT // 2),
-            (5, 15),
+            (BOSS_WIDTH // 2, 0), (BOSS_WIDTH - 5, 15),
+            (BOSS_WIDTH, BOSS_HEIGHT // 2), (BOSS_WIDTH - 5, BOSS_HEIGHT - 10),
+            (5, BOSS_HEIGHT - 10), (0, BOSS_HEIGHT // 2), (5, 15),
         ]
         pygame.draw.polygon(surface, PURPLE, body_points)
-
-        # Armadura interna
         inner_points = [
-            (BOSS_WIDTH // 2, 8),
-            (BOSS_WIDTH - 15, 18),
-            (BOSS_WIDTH - 10, BOSS_HEIGHT // 2),
-            (BOSS_WIDTH - 15, BOSS_HEIGHT - 15),
-            (15, BOSS_HEIGHT - 15),
-            (10, BOSS_HEIGHT // 2),
-            (15, 18),
+            (BOSS_WIDTH // 2, 8), (BOSS_WIDTH - 15, 18),
+            (BOSS_WIDTH - 10, BOSS_HEIGHT // 2), (BOSS_WIDTH - 15, BOSS_HEIGHT - 15),
+            (15, BOSS_HEIGHT - 15), (10, BOSS_HEIGHT // 2), (15, 18),
         ]
         pygame.draw.polygon(surface, DARK_GRAY, inner_points)
-
-        # Olho central grande
         eye_y = BOSS_HEIGHT // 2 - 3
         pygame.draw.circle(surface, RED, (BOSS_WIDTH // 2, eye_y), 8)
         pygame.draw.circle(surface, YELLOW, (BOSS_WIDTH // 2, eye_y), 4)
         pygame.draw.circle(surface, WHITE, (BOSS_WIDTH // 2, eye_y), 2)
-
-        # Canhões laterais
-        cannon_w = 8
-        cannon_h = 15
-        pygame.draw.rect(surface, DARK_RED, (5, BOSS_HEIGHT - cannon_h - 5, cannon_w, cannon_h))
-        pygame.draw.rect(surface, DARK_RED, (BOSS_WIDTH - cannon_w - 5, BOSS_HEIGHT - cannon_h - 5, cannon_w, cannon_h))
-
-        # Detalhes de nível (linhas extras por nível)
+        pygame.draw.rect(surface, DARK_RED, (5, BOSS_HEIGHT - 20, 8, 15))
+        pygame.draw.rect(surface, DARK_RED, (BOSS_WIDTH - 13, BOSS_HEIGHT - 20, 8, 15))
         for i in range(min(self.level, 3)):
             y_line = 12 + i * 5
             pygame.draw.line(surface, MAGENTA, (15, y_line), (BOSS_WIDTH - 15, y_line), 1)
-
         return surface
 
     def update(self):
-        """Atualiza posição do boss: entrada e movimento lateral com tiros."""
+        """Atualiza posição e tiros."""
         if self.entering:
             self.rect.y += 1
             if self.rect.top >= 30:
                 self.entering = False
             return
-
-        # Movimento horizontal
         self.rect.x += self.speed * self.direction
-
-        # Inverte direção nas bordas
         if self.rect.right >= SCREEN_WIDTH - 10:
             self.direction = -1
         elif self.rect.left <= 10:
             self.direction = 1
-
-        # Leve oscilação vertical
         self.rect.y = 30 + int(10 * math.sin(pygame.time.get_ticks() / 800))
-
-        # Atira
         self._shoot()
 
     def _shoot(self):
-        """Dispara tiros para baixo periodicamente."""
+        """Dispara tiros."""
         now = pygame.time.get_ticks()
         if now - self.last_shot >= self.shoot_delay:
             self.last_shot = now
-
-            # Tiro central
             b1 = BossBullet(self.rect.centerx, self.rect.bottom, 0, BOSS_BULLET_SPEED)
             self.boss_bullets.add(b1)
             self.all_sprites_group.add(b1)
-
-            # Tiros laterais a partir do nível 2
             if self.level >= 2:
                 b2 = BossBullet(self.rect.left + 12, self.rect.bottom - 5, -1, BOSS_BULLET_SPEED)
                 b3 = BossBullet(self.rect.right - 12, self.rect.bottom - 5, 1, BOSS_BULLET_SPEED)
                 self.boss_bullets.add(b2, b3)
                 self.all_sprites_group.add(b2, b3)
-
-            # Tiros diagonais extras a partir do nível 3
             if self.level >= 3:
                 b4 = BossBullet(self.rect.left + 5, self.rect.bottom, -2, BOSS_BULLET_SPEED - 1)
                 b5 = BossBullet(self.rect.right - 5, self.rect.bottom, 2, BOSS_BULLET_SPEED - 1)
@@ -698,82 +775,62 @@ class Boss(pygame.sprite.Sprite):
                 self.all_sprites_group.add(b4, b5)
 
     def take_damage(self):
-        """Reduz 1 de HP do boss.
+        """Reduz HP.
 
         Returns:
-            bool: True se o boss morreu (HP <= 0).
+            bool: True se morreu.
         """
         self.hp -= 1
-        # Flash vermelho ao levar dano
         if self.hp > 0:
-            self._flash_damage()
+            self.image = self._create_boss_image()
+            flash = pygame.Surface((BOSS_WIDTH, BOSS_HEIGHT), pygame.SRCALPHA)
+            flash.fill((255, 0, 0, 80))
+            self.image.blit(flash, (0, 0))
         return self.hp <= 0
 
-    def _flash_damage(self):
-        """Efeito visual de flash ao tomar dano."""
-        self.image = self._create_boss_image()
-        # Adiciona overlay vermelho
-        flash = pygame.Surface((BOSS_WIDTH, BOSS_HEIGHT), pygame.SRCALPHA)
-        flash.fill((255, 0, 0, 80))
-        self.image.blit(flash, (0, 0))
-
     def draw_health_bar(self, screen):
-        """Desenha a barra de vida do boss no topo da tela.
+        """Desenha barra de vida.
 
         Args:
             screen: Superfície de desenho.
         """
         if self.entering:
             return
-
         bar_width = 200
         bar_height = 12
         bar_x = SCREEN_WIDTH // 2 - bar_width // 2
         bar_y = 15
-
-        # Fundo da barra
         pygame.draw.rect(screen, DARK_GRAY, (bar_x - 1, bar_y - 1, bar_width + 2, bar_height + 2))
-
-        # Barra de vida (verde → amarelo → vermelho)
         hp_ratio = self.hp / self.max_hp
         fill_width = int(bar_width * hp_ratio)
-
         if hp_ratio > 0.5:
             bar_color = GREEN
         elif hp_ratio > 0.25:
             bar_color = YELLOW
         else:
             bar_color = RED
-
         pygame.draw.rect(screen, bar_color, (bar_x, bar_y, fill_width, bar_height))
-
-        # Texto do boss
         boss_font = pygame.font.SysFont("arial", 14)
         boss_text = boss_font.render(f"BOSS Lv.{self.level}", True, WHITE)
         screen.blit(boss_text, (SCREEN_WIDTH // 2 - boss_text.get_width() // 2, bar_y - 15))
 
 
 class BossBullet(pygame.sprite.Sprite):
-    """Projétil disparado pelo boss.
-
-    Desce pela tela em direção ao jogador. Tem cor vermelha
-    para diferenciar dos tiros do jogador.
+    """Projétil do boss.
 
     Attributes:
-        image: Superfície do tiro.
-        rect: Retângulo de posição.
         speed_x: Velocidade horizontal.
-        speed_y: Velocidade vertical (positiva = para baixo).
+        speed_y: Velocidade vertical.
     """
 
     def __init__(self, x, y, speed_x, speed_y):
-        """Inicializa o tiro do boss.
+        """Inicializa tiro do boss.
 
         Args:
-            x: Posição horizontal.
-            y: Posição vertical.
-            speed_x: Velocidade horizontal.
-            speed_y: Velocidade vertical.
+            x: Posição X.
+            y: Posição Y.
+            speed_x: Velocidade X.
+            speed_y: Velocidade Y.
         """
         super().__init__()
         self.image = pygame.Surface((6, 10), pygame.SRCALPHA)
@@ -786,7 +843,7 @@ class BossBullet(pygame.sprite.Sprite):
         self.speed_y = speed_y
 
     def update(self):
-        """Move o tiro e remove se sair da tela."""
+        """Move e remove se fora da tela."""
         self.rect.y += self.speed_y
         self.rect.x += self.speed_x
         if self.rect.top > SCREEN_HEIGHT or self.rect.right < 0 or self.rect.left > SCREEN_WIDTH:
@@ -794,23 +851,21 @@ class BossBullet(pygame.sprite.Sprite):
 
 
 class PowerUp(pygame.sprite.Sprite):
-    """Item de power-up que cai pela tela.
+    """Power-up que cai pela tela.
 
     Attributes:
-        image: Superfície do power-up.
-        rect: Retângulo de posição.
-        speed: Velocidade de queda.
         kind: Tipo ('triple', 'shield' ou 'bomb').
+        speed: Velocidade de queda.
     """
 
     TYPES = ["triple", "shield", "bomb"]
 
     def __init__(self, x, y):
-        """Inicializa o power-up.
+        """Inicializa power-up.
 
         Args:
-            x: Posição horizontal.
-            y: Posição vertical.
+            x: Posição X.
+            y: Posição Y.
         """
         super().__init__()
         self.kind = random.choice(self.TYPES)
@@ -827,17 +882,12 @@ class PowerUp(pygame.sprite.Sprite):
             pygame.Surface: Superfície do power-up.
         """
         surface = pygame.Surface((POWERUP_SIZE, POWERUP_SIZE), pygame.SRCALPHA)
-
         if self.kind == "triple":
             pygame.draw.polygon(surface, YELLOW, [
-                (POWERUP_SIZE // 2, 2),
-                (2, POWERUP_SIZE - 2),
-                (POWERUP_SIZE - 2, POWERUP_SIZE - 2),
+                (POWERUP_SIZE // 2, 2), (2, POWERUP_SIZE - 2), (POWERUP_SIZE - 2, POWERUP_SIZE - 2),
             ])
             pygame.draw.polygon(surface, ORANGE, [
-                (POWERUP_SIZE // 2, 6),
-                (6, POWERUP_SIZE - 4),
-                (POWERUP_SIZE - 6, POWERUP_SIZE - 4),
+                (POWERUP_SIZE // 2, 6), (6, POWERUP_SIZE - 4), (POWERUP_SIZE - 6, POWERUP_SIZE - 4),
             ])
         elif self.kind == "shield":
             pygame.draw.circle(surface, LIGHT_BLUE, (POWERUP_SIZE // 2, POWERUP_SIZE // 2), POWERUP_SIZE // 2 - 1)
@@ -847,11 +897,10 @@ class PowerUp(pygame.sprite.Sprite):
             pygame.draw.rect(surface, RED, (2, 2, POWERUP_SIZE - 4, POWERUP_SIZE - 4))
             pygame.draw.rect(surface, ORANGE, (6, 6, POWERUP_SIZE - 12, POWERUP_SIZE - 12))
             pygame.draw.rect(surface, YELLOW, (9, 9, POWERUP_SIZE - 18, POWERUP_SIZE - 18))
-
         return surface
 
     def update(self):
-        """Move o power-up e remove se sair da tela."""
+        """Move e remove se fora da tela."""
         self.rect.y += self.speed
         self.rect.x += int(math.sin(pygame.time.get_ticks() / 200) * 0.8)
         if self.rect.top > SCREEN_HEIGHT:
@@ -873,31 +922,28 @@ class Particle(pygame.sprite.Sprite):
     """
 
     def __init__(self, x, y, color):
-        """Inicializa a partícula.
+        """Inicializa partícula.
 
         Args:
-            x: Posição X da explosão.
-            y: Posição Y da explosão.
-            color: Cor da partícula.
+            x: Posição X.
+            y: Posição Y.
+            color: Cor.
         """
         super().__init__()
         self.pos_x = float(x)
         self.pos_y = float(y)
-
         angle = random.uniform(0, 2 * math.pi)
         speed = random.uniform(PARTICLE_MIN_SPEED, PARTICLE_MAX_SPEED)
         self.vel_x = math.cos(angle) * speed
         self.vel_y = math.sin(angle) * speed
-
         self.color = color
         self.initial_radius = random.randint(2, 5)
         self.radius = self.initial_radius
         self.spawn_time = pygame.time.get_ticks()
-
         self._update_image()
 
     def _update_image(self):
-        """Redesenha com raio atual."""
+        """Redesenha partícula."""
         size = max(self.radius * 2, 1)
         self.image = pygame.Surface((size, size), pygame.SRCALPHA)
         if self.radius >= 1:
@@ -910,31 +956,29 @@ class Particle(pygame.sprite.Sprite):
         if elapsed >= PARTICLE_LIFETIME:
             self.kill()
             return
-
         self.pos_x += self.vel_x
         self.pos_y += self.vel_y
         self.vel_x *= 0.96
         self.vel_y *= 0.96
-
         life_ratio = 1 - (elapsed / PARTICLE_LIFETIME)
         self.radius = max(int(self.initial_radius * life_ratio), 1)
         self._update_image()
 
 
 class Explosion:
-    """Fábrica de explosões com partículas."""
+    """Fábrica de explosões."""
 
     COLORS = [YELLOW, ORANGE, RED, WHITE]
 
     @staticmethod
     def create(x, y, all_sprites_group, big=False):
-        """Cria explosão na posição dada.
+        """Cria explosão.
 
         Args:
             x: Posição X.
             y: Posição Y.
             all_sprites_group: Grupo de sprites.
-            big: Se True, explosão maior.
+            big: Explosão maior se True.
         """
         count = EXPLOSION_PARTICLES * 3 if big else EXPLOSION_PARTICLES
         for _ in range(count):
@@ -959,23 +1003,23 @@ class Game:
         clock: Relógio de FPS.
         running: Flag de execução.
         state: Estado atual.
-        stars: Estrelas do fundo.
-        all_sprites: Grupo de todos os sprites.
-        bullets: Grupo de tiros do jogador.
-        enemies: Grupo de inimigos.
-        powerups: Grupo de power-ups.
-        boss_bullets: Grupo de tiros do boss.
+        background: Sistema de fundo parallax.
+        all_sprites: Todos os sprites.
+        bullets: Tiros do jogador.
+        enemies: Inimigos.
+        powerups: Power-ups.
+        boss_bullets: Tiros do boss.
         wave_manager: Gerenciador de waves.
-        boss: Referência ao boss atual (ou None).
+        boss: Boss atual (ou None).
         score: Pontuação.
-        final_score: Pontuação final (game over).
-        final_wave: Wave final (game over).
-        bomb_flash: Timestamp do flash de bomba.
-        menu_selection: Opção selecionada no menu.
+        final_score: Pontuação final.
+        final_wave: Wave final.
+        bomb_flash: Timestamp do flash.
+        menu_selection: Opção do menu.
     """
 
     def __init__(self):
-        """Inicializa o PyGame e a janela."""
+        """Inicializa o jogo."""
         pygame.init()
         pygame.mixer.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -989,23 +1033,23 @@ class Game:
         self.font_big = pygame.font.SysFont("arial", 52)
         self.font_title = pygame.font.SysFont("arial", 60, bold=True)
 
-        self.stars = [Star() for _ in range(STAR_COUNT)]
+        self.background = Background()
         self.final_score = 0
         self.final_wave = 0
         self.menu_selection = 0
 
     def run(self):
-        """Loop principal do programa."""
+        """Loop principal."""
         while self.running:
             self.clock.tick(FPS)
 
             if self.state == STATE_MENU:
                 self._menu_events()
-                self._update_stars()
+                self.background.update()
                 self._draw_menu()
             elif self.state == STATE_INSTRUCTIONS:
                 self._instructions_events()
-                self._update_stars()
+                self.background.update()
                 self._draw_instructions()
             elif self.state == STATE_PLAYING:
                 self._game_events()
@@ -1013,27 +1057,13 @@ class Game:
                 self._game_draw()
             elif self.state == STATE_GAME_OVER:
                 self._game_over_events()
-                self._update_stars()
+                self.background.update()
                 self._draw_game_over()
 
         pygame.quit()
 
     # =========================================================================
-    # ESTRELAS
-    # =========================================================================
-
-    def _update_stars(self):
-        """Atualiza estrelas do fundo."""
-        for star in self.stars:
-            star.update()
-
-    def _draw_stars(self):
-        """Desenha estrelas do fundo."""
-        for star in self.stars:
-            star.draw(self.screen)
-
-    # =========================================================================
-    # MENU PRINCIPAL
+    # MENU
     # =========================================================================
 
     def _menu_events(self):
@@ -1057,9 +1087,9 @@ class Game:
                     self.running = False
 
     def _draw_menu(self):
-        """Desenha menu principal."""
+        """Desenha menu."""
         self.screen.fill(BLACK)
-        self._draw_stars()
+        self.background.draw(self.screen)
 
         title_y = 150
         glow = int(30 * math.sin(pygame.time.get_ticks() / 500)) + 225
@@ -1094,7 +1124,6 @@ class Game:
 
         hint = self.font_small.render("Use SETAS para navegar e ENTER para selecionar", True, GRAY)
         self.screen.blit(hint, (SCREEN_WIDTH // 2 - hint.get_width() // 2, SCREEN_HEIGHT - 40))
-
         pygame.display.flip()
 
     # =========================================================================
@@ -1111,9 +1140,9 @@ class Game:
                     self.state = STATE_MENU
 
     def _draw_instructions(self):
-        """Desenha tela de instruções."""
+        """Desenha instruções."""
         self.screen.fill(BLACK)
-        self._draw_stars()
+        self.background.draw(self.screen)
 
         title = self.font_big.render("INSTRUÇÕES", True, CYAN)
         self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 40))
@@ -1141,12 +1170,10 @@ class Game:
                 ("", "+500 pontos por boss derrotado"),
             ]),
         ]
-
         for section_title, section_color, items in sections:
             section_text = self.font_medium.render(section_title, True, section_color)
             self.screen.blit(section_text, (SCREEN_WIDTH // 2 - section_text.get_width() // 2, y))
             y += 35
-
             for key, description in items:
                 if key:
                     key_text = self.font_small.render(f"{key}: ", True, WHITE)
@@ -1163,7 +1190,6 @@ class Game:
 
         back_text = self.font.render("Pressione ENTER ou ESC para voltar", True, GRAY)
         self.screen.blit(back_text, (SCREEN_WIDTH // 2 - back_text.get_width() // 2, SCREEN_HEIGHT - 50))
-
         pygame.display.flip()
 
     # =========================================================================
@@ -1187,7 +1213,7 @@ class Game:
         self.state = STATE_PLAYING
 
     def _game_events(self):
-        """Eventos durante o jogo."""
+        """Eventos do jogo."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
@@ -1198,8 +1224,9 @@ class Game:
                     self.player.shoot()
 
     def _game_update(self):
-        """Atualiza jogo: sprites, spawn, colisões."""
+        """Atualiza jogo."""
         self.all_sprites.update()
+        self.background.update()
 
         if self.wave_manager.is_wave_complete():
             self.boss = None
@@ -1217,7 +1244,7 @@ class Game:
         self._check_boss_collisions()
 
     def _spawn_enemies(self):
-        """Spawna inimigos normais."""
+        """Spawna inimigos."""
         if self.wave_manager.should_spawn(len(self.enemies)):
             enemy = Enemy(
                 self.wave_manager.enemy_min_speed,
@@ -1228,14 +1255,13 @@ class Game:
             self.all_sprites.add(enemy)
 
     def _spawn_boss(self):
-        """Cria o boss da wave atual."""
+        """Spawna boss."""
         level = self.wave_manager.get_boss_level()
         self.boss = Boss(level, self.boss_bullets, self.all_sprites)
         self.all_sprites.add(self.boss)
 
     def _check_collisions(self):
         """Colisões: tiro x inimigo, inimigo x jogador."""
-        # Tiro x Inimigo
         hits = pygame.sprite.groupcollide(self.bullets, self.enemies, True, True)
         for bullet, enemies_hit in hits.items():
             for enemy in enemies_hit:
@@ -1247,7 +1273,6 @@ class Game:
                     self.powerups.add(powerup)
                     self.all_sprites.add(powerup)
 
-        # Inimigo x Jogador
         if not self.player.invincible:
             enemy_hits = pygame.sprite.spritecollide(self.player, self.enemies, True)
             if enemy_hits:
@@ -1262,11 +1287,10 @@ class Game:
                     self.state = STATE_GAME_OVER
 
     def _check_boss_collisions(self):
-        """Colisões envolvendo o boss: tiro x boss, tiro do boss x jogador."""
+        """Colisões com boss."""
         if self.boss is None or not self.boss.alive():
             return
 
-        # Tiro do jogador x Boss
         boss_hits = pygame.sprite.spritecollide(self.boss, self.bullets, True)
         for bullet in boss_hits:
             dead = self.boss.take_damage()
@@ -1276,18 +1300,15 @@ class Game:
                 Explosion.create(self.boss.rect.centerx, self.boss.rect.centery, self.all_sprites, big=True)
                 Explosion.create(self.boss.rect.left + 10, self.boss.rect.top + 10, self.all_sprites, big=True)
                 Explosion.create(self.boss.rect.right - 10, self.boss.rect.bottom - 10, self.all_sprites, big=True)
-                # Dropa power-up garantido
                 powerup = PowerUp(self.boss.rect.centerx, self.boss.rect.centery)
                 self.powerups.add(powerup)
                 self.all_sprites.add(powerup)
                 self.boss.kill()
                 self.boss = None
-                # Limpa tiros do boss
                 for b in self.boss_bullets:
                     b.kill()
                 return
 
-        # Tiro do boss x Jogador
         if not self.player.invincible:
             boss_bullet_hits = pygame.sprite.spritecollide(self.player, self.boss_bullets, True)
             if boss_bullet_hits:
@@ -1298,7 +1319,6 @@ class Game:
                     self.final_wave = self.wave_manager.wave_number
                     self.state = STATE_GAME_OVER
 
-        # Boss encosta no jogador
         if not self.player.invincible and self.boss and pygame.sprite.collide_rect(self.player, self.boss):
             alive = self.player.hit()
             if not alive:
@@ -1319,15 +1339,13 @@ class Game:
                 self._activate_bomb()
 
     def _activate_bomb(self):
-        """Bomba: destrói inimigos (não o boss)."""
+        """Ativa bomba."""
         self.bomb_flash = pygame.time.get_ticks()
         for enemy in self.enemies:
             self.score += 100
             self.wave_manager.enemy_killed()
             Explosion.create(enemy.rect.centerx, enemy.rect.centery, self.all_sprites, big=True)
         self.enemies.empty()
-
-        # Dá dano no boss se existir
         if self.boss and self.boss.alive():
             for _ in range(5):
                 dead = self.boss.take_damage()
@@ -1344,6 +1362,7 @@ class Game:
     def _game_draw(self):
         """Desenha o jogo."""
         self.screen.fill(BLACK)
+        self.background.draw(self.screen)
 
         if pygame.time.get_ticks() - self.bomb_flash < BOMB_FLASH_DURATION:
             alpha = 255 * (1 - (pygame.time.get_ticks() - self.bomb_flash) / BOMB_FLASH_DURATION)
@@ -1355,7 +1374,6 @@ class Game:
         self.all_sprites.draw(self.screen)
         self.player.draw_shield(self.screen)
 
-        # Barra de vida do boss
         if self.boss and self.boss.alive():
             self.boss.draw_health_bar(self.screen)
 
@@ -1367,9 +1385,8 @@ class Game:
         pygame.display.flip()
 
     def _draw_wave_transition(self):
-        """Texto de anúncio da wave."""
+        """Texto de transição de wave."""
         elapsed = pygame.time.get_ticks() - self.wave_manager.transition_start
-
         if elapsed < 500:
             alpha = int(255 * (elapsed / 500))
         elif elapsed > WAVE_TRANSITION_DURATION - 500:
@@ -1386,7 +1403,6 @@ class Game:
 
         wave_text.set_alpha(alpha)
         subtitle.set_alpha(alpha)
-
         self.screen.blit(wave_text, (SCREEN_WIDTH // 2 - wave_text.get_width() // 2, SCREEN_HEIGHT // 3))
         self.screen.blit(subtitle, (SCREEN_WIDTH // 2 - subtitle.get_width() // 2, SCREEN_HEIGHT // 3 + 55))
 
@@ -1431,9 +1447,9 @@ class Game:
                     self.state = STATE_MENU
 
     def _draw_game_over(self):
-        """Desenha tela de game over."""
+        """Desenha game over."""
         self.screen.fill(BLACK)
-        self._draw_stars()
+        self.background.draw(self.screen)
 
         pulse = int(30 * math.sin(pygame.time.get_ticks() / 400)) + 225
         go_color = (pulse, 0, 0)
